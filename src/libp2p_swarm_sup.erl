@@ -5,10 +5,11 @@
 % supervisor
 -export([init/1]).
 % api
--export([server/1, sup/1]).
+-export([server/1, peerbook/1, sup/1]).
 
 -define(SUP, swarm_sup).
 -define(SERVER, swarm_server).
+-define(PEERBOOK, swarm_peerbook).
 
 init([]) ->
     inert:start(),
@@ -36,6 +37,13 @@ init([]) ->
                    10000,
                    worker,
                    [libp2p_swarm_server]
+                  },
+                  {?PEERBOOK,
+                   {libp2p_peerbook, start_link, [TID]},
+                   permanent,
+                   10000,
+                   worker,
+                   [libp2p_peerbook]
                   } ],
     {ok, {SupFlags, ChildSpecs}}.
 
@@ -47,4 +55,10 @@ sup(TID) ->
 server(Sup) ->
     Children = supervisor:which_children(Sup),
     {?SERVER, Pid, _, _} = lists:keyfind(?SERVER, 1, Children),
+    Pid.
+
+-spec peerbook(supervisor:sup_ref()) -> libp2p_swarm_server:ref().
+peerbook(Sup) ->
+    Children = supervisor:which_children(Sup),
+    {?PEERBOOK, Pid, _, _} = lists:keyfind(?PEERBOOK, 1, Children),
     Pid.

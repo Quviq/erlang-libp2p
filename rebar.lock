@@ -1,5 +1,9 @@
 {"1.1.0",
 [{<<"base32">>,{pkg,<<"base32">>,<<"0.1.0">>},1},
+ {<<"bitcask">>,
+  {git,"https://github.com/helium/bitcask",
+       {ref,"fa6e5166de683a351ca63f97b6a08c9b815affab"}},
+  0},
  {<<"erl_base58">>,{pkg,<<"erl_base58">>,<<"0.0.1">>},0},
  {<<"goldrush">>,{pkg,<<"goldrush">>,<<"0.1.9">>},1},
  {<<"gpb">>,
@@ -10,21 +14,27 @@
   {git,"https://github.com/msantos/inert",
        {ref,"0d150fafaf3945b3a9761269c273eaa1f55649db"}},
   0},
+ {<<"keccakf1600">>,{pkg,<<"keccakf1600">>,<<"2.0.0">>},1},
  {<<"lager">>,
   {git,"https://github.com/erlang-lager/lager.git",
-       {ref,"c694de05f7fe0d07f624b37273cab0b751ec25b5"}},
+       {ref,"5558a7330431c693b7ef59efaf45c7a8e714d6d3"}},
   0},
  {<<"multiaddr">>,{pkg,<<"multiaddr">>,<<"1.1.1">>},0},
+ {<<"multihash">>,{pkg,<<"multihash">>,<<"1.1.0">>},0},
  {<<"ranch">>,
   {git,"https://github.com/ninenines/ranch.git",
        {ref,"55c2a9d623454f372a15e99721a37093d8773b48"}},
   0},
+ {<<"setup">>,{pkg,<<"setup">>,<<"2.0.2">>},0},
  {<<"small_ints">>,{pkg,<<"small_ints">>,<<"0.1.0">>},1}]}.
 [
 {pkg_hash,[
  {<<"base32">>, <<"044F6DC95709727CA2176F3E97A41DDAA76B5BC690D3536908618C0CB32616A2">>},
  {<<"erl_base58">>, <<"37710854461D71DF338E73C65776302DB41C4BAB4674D2EC134ED7BCFC7B5552">>},
  {<<"goldrush">>, <<"F06E5D5F1277DA5C413E84D5A2924174182FB108DABB39D5EC548B27424CD106">>},
+ {<<"keccakf1600">>, <<"69D02D844A101BF3C75484C9E334FD04B0F57280727E881CAC3BD8240432F43A">>},
  {<<"multiaddr">>, <<"ADD874FA38F0294C136655B382865D359C8BF3EB28BC9A41433EEBDB70B400D1">>},
+ {<<"multihash">>, <<"BB5C40F7464FB5DCACFA0B5DC14C9BDA9F920617040CB6CFC4FA1B434A016F11">>},
+ {<<"setup">>, <<"1203F4CDA11306C2E34434244576DED0A7BBFB0908D9A572356C809BD0CDF085">>},
  {<<"small_ints">>, <<"82A824C8794A2DDC73CB5CD00EAD11331DB296521AD16A619C13D668572B868A">>}]}
 ].

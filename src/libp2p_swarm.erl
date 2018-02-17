@@ -4,7 +4,8 @@
          dial/3, dial/5, connect/2, connect/4,
          listen/2, listen_addrs/1,
          add_connection_handler/3,
-         add_stream_handler/3, stream_handlers/1]).
+         add_stream_handler/3, stream_handlers/1,
+         peerbook/1]).
 
 -type connect_opt() :: {unique, true | false}.
 
@@ -99,3 +100,10 @@ add_stream_handler(Sup, Key, HandlerDef) ->
 stream_handlers(Sup) ->
     Server = libp2p_swarm_sup:server(Sup),
     libp2p_swarm_server:stream_handlers(Server).
+
+%%
+%% Peerbook
+%%
+
+peerbook(Sup) ->
+    libp2p_swarm_sup:peerbook(Sup).

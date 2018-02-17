@@ -1,6 +1,6 @@
 -module(libp2p_config).
 
--export([get_config/2,
+-export([get_env/2, get_env/3,
          insert_pid/4, lookup_pid/3, lookup_pids/2, remove_pid/3,
          session/0, insert_session/3, lookup_session/2, lookup_session/3, remove_session/2, lookup_sessions/1,
          insert_handler/3, lookup_handler/2,
@@ -20,13 +20,35 @@
 %% Global config
 %%
 
-get_config(Module, Defaults) ->
-    case application:get_env(Module) of
-        undefined -> Defaults;
-        {ok, Values} ->
-            sets:to_list(sets:union(sets:from_list(Values),
-                                    sets:from_list(Defaults)))
+-spec get_env(atom(), atom() | list()) -> undefined | {ok, any()}.
+get_env(App, [H|T]) ->
+    case application:get_env(App, H) of
+        {ok, V} ->
+            get_env_l(T, V);
+        undefined ->
+            undefined
+    end;
+get_env(App, K) when is_atom(K) ->
+    application:get_env(App, K).
+
+get_env(App, K, Default) ->
+    case get_env(App, K) of
+        {ok, V}   -> V;
+        undefined -> Default
     end.
+
+get_env_l([], V) ->
+    {ok, V};
+get_env_l([H|T], [_|_] = L) ->
+    case lists:keyfind(H, 1, L) of
+        {_, V} ->
+            get_env_l(T, V);
+        false ->
+            undefined
+    end;
+get_env_l(_, _) ->
+    undefined.
+
 
 %%
 %% Common pid CRUD

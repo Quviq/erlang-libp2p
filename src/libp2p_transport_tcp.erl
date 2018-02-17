@@ -19,28 +19,39 @@
 
 -define(CONFIG_SECTION, tcp).
 
+-spec transport_options(inet:ip_address()) -> {[term()], [term()]}.
+transport_options(IP) ->
+    OptionDefaults = [
+                      {ip, IP},
+                      {backlog, 1024},
+                      {nodelay, true},
+                      {send_timeout, 30000},
+                      {send_timeout_close, true},
+
+                      % Transport options. Add new transport
+                      % default options to TransportKeys below
+                      {max_connections, 1024}
+                     ],
+    TransportKeys = sets:from_list([max_connections]),
+    % Go get the tcp listen options
+    Options = case libp2p_config:get_env(transport, tcp) of
+                  undefined -> OptionDefaults;
+                  {ok, Values} ->
+                      sets:to_list(sets:union(sets:from_list(Values),
+                                              sets:from_list(OptionDefaults)))
+              end,
+    % Split out the transport from the listen options
+    lists:partition(fun({Key, _}) ->
+                            sets:is_element(Key, TransportKeys)
+                    end, Options).
+
+
 -spec start_listener(pid(), string(), ets:tab()) -> {ok, [string()], pid()} | {error, term()}.
 start_listener(Sup, Addr, TID) ->
     case tcp_addr(Addr) of
         {IP, Port, Type} ->
-            OptionDefaults = [
-                              % Listen options
-                              {ip, IP},
-                              {backlog, 1024},
-                              {nodelay, true},
-                              {send_timeout, 30000},
-                              {send_timeout_close, true},
+            {TransportOpts, ListenOpts0} = transport_options(IP),
 
-                              % Transport options. Add new transport
-                              % default options to TransportKeys below
-                              {max_connections, 1024}
-                             ],
-            TransportKeys = sets:from_list([max_connections]),
-            Options = libp2p_config:get_config(?CONFIG_SECTION, OptionDefaults),
-            {TransportOpts, ListenOpts0} =
-                lists:partition(fun({Key, _}) ->
-                                        sets:is_element(Key, TransportKeys)
-                                end, Options),
             % Non-overidable options, taken from ranch_tcp:listen
             DefaultListenOpts = [binary, {active, false}, {packet, raw}, {reuseaddr, true}],
             % filter out disallowed options and supply default ones
