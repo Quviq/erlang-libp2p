@@ -2,7 +2,7 @@
 
 -include_lib("bitcask/include/bitcask.hrl").
 
--export([start_link/1, init/1, handle_call/3, handle_cast/2, terminate/2]).
+-export([start_link/1, init/1, handle_call/3, handle_info/2, handle_cast/2, terminate/2]).
 -export([keys/1, put/2, put/3, get/2, is_key/2]).
 
 -behviour(gen_server).
@@ -52,7 +52,9 @@ init([_TID]) ->
     DataDir = libp2p_config:get_env(peerbook, data_dir, "data/peerbook"),
     case bitcask:open(DataDir, [read_write]) of
         {error, Reason} -> {error, Reason};
-        Ref -> {ok, #state{store=Ref}}
+        Ref ->
+            process_flag(trap_exit, true),
+            {ok, #state{store=Ref}}
     end.
 
 
@@ -87,6 +89,10 @@ handle_call(Msg, _From, State) ->
 
 handle_cast(Msg, State) ->
     lager:warning("Unhandled cast: ~p~n", [Msg]),
+    {noreply, State}.
+
+handle_info(Msg, State) ->
+    lager:warning("Unhandled info: ~p~n", [Msg]),
     {noreply, State}.
 
 terminate(_Reason, #state{store=Store}) ->
