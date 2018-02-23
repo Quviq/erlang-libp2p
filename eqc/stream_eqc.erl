@@ -112,44 +112,56 @@ recv_update_inflight(Size, Inflight) ->
         false -> Inflight - Size
     end.
 
-
-
 prop_correct() ->
-%   with_parameter(print_counterexample, false,
-                   ?FORALL({Packet, Cmds},
-                           {eqc_gen:largebinary(500000), noshrink(commands(?MODULE))},
-                           begin
-                               application:ensure_all_started(ranch),
-                               application:ensure_all_started(lager),
-                               lager:set_loglevel(lager_console_backend, debug),
-                               Swarm1 = libp2p_swarm:start(0),
-                               Swarm2 = libp2p_swarm:start(0),
-                               ok = libp2p_swarm:add_stream_handler(Swarm2, "eqc", {?MODULE, serve_stream, [self()]}),
+  prop_correct(silent).
 
-                               [S2Addr] = libp2p_swarm:listen_addrs(Swarm2),
-                               {ok, StreamClient} = libp2p_swarm:dial(Swarm1, S2Addr, "eqc"),
-                               StreamServer = receive
-                                                  {hello, Server} -> Server
-                                              end,
-                               erlang:monitor(process, StreamServer),
-                               {H, S0, Res} = run_commands(?MODULE, Cmds, [{swarm1, Swarm1},
-                                                                           {swarm2, Swarm2},
-                                                                           {client, StreamClient},
-                                                                           {server, StreamServer},
-                                                                           {packet, Packet}]),
-                               S = eqc_symbolic:eval(S0),
-                               ServerAlive = erlang:is_process_alive(StreamServer),
-                               libp2p_connection:close(StreamClient),
-                               libp2p_swarm:stop(Swarm1),
-                               libp2p_swarm:stop(Swarm2),
-                               pretty_commands(?MODULE, Cmds, {H, S, Res},
-                                               aggregate(command_names(Cmds),
-                                                         ?WHENFAIL(
-                                                            begin
-                                                                eqc:format("packet size: ~p~n", [byte_size(S#state.packet)]),
-                                                                eqc:format("state ~p~n", [S#state{packet= <<>>}])
-                                                            end,
-                                                            conjunction([{server, eqc:equals(ServerAlive, true)}, {result, eqc:equals(Res, ok)}]))))
-                           end).
+check() ->
+  eqc:check(prop_correct(verbose)).
+
+prop_correct(Mode) ->
+    eqc:dont_print_counterexample(
+     ?SETUP(
+        fun() ->
+            application:ensure_all_started(ranch),
+            application:ensure_all_started(lager),
+            case Mode of
+              verbose -> lager:set_loglevel(lager_console_backend, debug);
+              _ -> ok
+            end,
+            fun() -> lager:set_loglevel(lager_console_backend, error) end
+        end,
+        ?FORALL({Packet, Cmds},
+                {eqc_gen:largebinary(500000), noshrink(commands(?MODULE))},
+                begin
+
+                  Swarm1 = libp2p_swarm:start(0),
+                  Swarm2 = libp2p_swarm:start(0),
+                  ok = libp2p_swarm:add_stream_handler(Swarm2, "eqc", {?MODULE, serve_stream, [self()]}),
+
+                  [S2Addr] = libp2p_swarm:listen_addrs(Swarm2),
+                  {ok, StreamClient} = libp2p_swarm:dial(Swarm1, S2Addr, "eqc"),
+                  StreamServer = receive
+                                   {hello, Server} -> Server
+                                 end,
+                  erlang:monitor(process, StreamServer),
+                  {H, S0, Res} = run_commands(?MODULE, Cmds, [{swarm1, Swarm1},
+                                                              {swarm2, Swarm2},
+                                                              {client, StreamClient},
+                                                              {server, StreamServer},
+                                                              {packet, Packet}]),
+                  S = eqc_symbolic:eval(S0),
+                  ServerAlive = erlang:is_process_alive(StreamServer),
+                  libp2p_connection:close(StreamClient),
+                  libp2p_swarm:stop(Swarm1),
+                  libp2p_swarm:stop(Swarm2),
+                  pretty_commands(?MODULE, Cmds, {H, S, Res},
+                                  aggregate(command_names(Cmds),
+                                            ?WHENFAIL(
+                                               begin
+                                                 eqc:format("packet size: ~p~n", [byte_size(S#state.packet)]),
+                                                 eqc:format("state ~p~n", [S#state{packet= <<>>}])
+                                               end,
+                                               conjunction([{server, eqc:equals(ServerAlive, true)}, {result, eqc:equals(Res, ok)}]))))
+                end))).
 
 
