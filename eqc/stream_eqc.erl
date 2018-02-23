@@ -88,10 +88,9 @@ recv_pre(_S) ->
 
 recv_args(S) ->
     [?SUCHTHAT(Size, eqc_gen:oneof([eqc_gen:int(), eqc_gen:largeint()]), Size > 0),
-     S].
+     S#state.server].
 
-recv(Size, S) ->
-    Server = S#state.server,
+recv(Size, Server) ->
     Server ! {recv, Size},
     receive
         {recv, Size, Result} -> Result;
