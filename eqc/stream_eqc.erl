@@ -31,7 +31,8 @@ serve_loop(Connection, Parent) ->
             serve_loop(Connection, Parent);
          stop ->
             libp2p_connection:close(Connection),
-            ok
+      after 10000 ->
+          stop %% cleanup if we don't manage to stop it as part of the test
     end.
 
 
