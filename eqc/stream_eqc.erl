@@ -197,8 +197,8 @@ prop_correct(Mode) ->
 
                   {H, S, Res} = run_commands(?MODULE, Cmds, [{packet, Packet}]),
                   ServerDied = S#state.server =/= undefined andalso not erlang:is_process_alive(S#state.server),
-                  [ libp2p_connection:close(S#state.client) || S#state.client =/= undefined ],
-                  [ libp2p_swarm:stop(Swarm) || Swarm <- S#state.swarm ],
+                  [ catch libp2p_connection:close(S#state.client) || S#state.client =/= undefined ],
+                  [ catch libp2p_swarm:stop(Swarm) || Swarm <- S#state.swarm ],
                   pretty_commands(?MODULE, Cmds, {H, S, Res},
                                   aggregate(command_names(Cmds),
                                             ?WHENFAIL(
@@ -206,7 +206,8 @@ prop_correct(Mode) ->
                                                  eqc:format("packet size: ~p~n", [byte_size(S#state.packet)]),
                                                  eqc:format("state ~p~n", [S#state{packet= <<>>}])
                                                end,
-                                               conjunction([{server, not ServerDied}, {result, eqc:equals(Res, ok)}]))))
+                                               conjunction([{server, not ServerDied},
+                                                            {result, eqc:equals(Res, ok)}]))))
                 end))).
 
 
