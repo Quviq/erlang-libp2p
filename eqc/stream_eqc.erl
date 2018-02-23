@@ -14,23 +14,8 @@
           inflight=0
          }).
 
--export([serve_stream/4,
-         send_update_inflight/3, send_update_packet/3,
-         recv_update_inflight/2]).
--export([initial_state/0, prop_correct/0]).
-
--export([send/2,
-         send_pre/1,
-         send_args/1,
-         send_post/3,
-         send_next/3]).
-
--export([recv/2,
-         recv_pre/1,
-         recv_args/1,
-         recv_post/3,
-         recv_next/3]).
-
+%% This is a test model, export all functions to avoid problems when one is overlooked. 
+-compile([export_all, nowarn_export_all]).
 
 initial_state() ->
     #state{swarm1={var, swarm1}, swarm2={var, swarm2}, client={var, client}, server={var, server}, packet={var, packet}}.
