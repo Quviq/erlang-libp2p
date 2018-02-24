@@ -12,6 +12,7 @@
 -export([start_link/1, init/1, handle_call/3, handle_info/2, handle_cast/2, terminate/2]).
 
 -export([dial/5, listen/2, connect/4,
+         add_transport_handler/2,
          listen_addrs/1, add_connection_handler/3,
          add_external_listen_addr/3, record_observed_address/3, stungun_response/3,
          add_stream_handler/3, stream_handlers/1]).
@@ -40,17 +41,25 @@ listen(Pid, Addr) ->
 listen_addrs(Pid) ->
     gen_server:call(Pid, listen_addrs).
 
--spec add_connection_handler(pid(), string(), {libp2p_transport:connection_handler(), libp2p_transport:connection_handler()}) -> ok.
-add_connection_handler(Pid, Key, HandlerDef) ->
-    gen_server:call(Pid, {add_connection_handler, {Key, HandlerDef}}).
-
--spec add_stream_handler(pid(), string(), libp2p_session:stream_handler()) -> ok.
-add_stream_handler(Pid, Key, HandlerDef) ->
-    gen_server:call(Pid, {add_stream_handler, {Key, HandlerDef}}).
-
 -spec stream_handlers(pid()) -> [{string(), libp2p_session:stream_handler()}].
 stream_handlers(Pid) ->
     gen_server:call(Pid, stream_handlers).
+
+
+-spec add_transport_handler(pid(), atom()) -> ok.
+add_transport_handler(Pid, Transport) ->
+    gen_server:cast(Pid, {add_transport_handler, Transport}),
+    ok.
+
+-spec add_connection_handler(pid(), string(), {libp2p_transport:connection_handler(), libp2p_transport:connection_handler()}) -> ok.
+add_connection_handler(Pid, Key, {ServerMF, ClientMF}) ->
+    gen_server:cast(Pid, {add_connection_handler, {Key, ServerMF, ClientMF}}),
+    ok.
+
+-spec add_stream_handler(pid(), string(), libp2p_session:stream_handler()) -> ok.
+add_stream_handler(Pid, Key, ServerMF) ->
+    gen_server:cast(Pid, {add_stream_handler, {Key, ServerMF}}),
+    ok.
 
 -spec add_external_listen_addr(pid(), string(), string()) -> ok.
 add_external_listen_addr(Pid, MA, Address) ->
@@ -70,15 +79,16 @@ start_link(TID) ->
 
 init([TID]) ->
     erlang:process_flag(trap_exit, true),
-    % Register the a default connection handler
-    DefConnHandler = {"yamux/1.0.0",
-                      {libp2p_yamux_session, start_server},
-                      {libp2p_yamux_session, start_client}},
-    libp2p_config:insert_connection_handler(TID, DefConnHandler),
-    IdentifyHandler = {"identify/1.0.0", {libp2p_stream_identify, server}},
-    libp2p_config:insert_stream_handler(TID, IdentifyHandler),
-    StungunHandler = {"stungun/1.0.0", {libp2p_stream_stungun, server}},
-    libp2p_config:insert_stream_handler(TID, StungunHandler),
+    % Add tcp as a default transport
+    add_transport_handler(self(), libp2p_transport_tcp),
+    % Register the default connection handler
+    add_connection_handler(self(), "yamux/1.0.0",
+                           {{libp2p_yamux_session, start_server},
+                            {libp2p_yamux_session, start_client}}),
+    % Register default stream handlers
+    add_stream_handler(self(), "identify/1.0.0",
+                       {libp2p_stream_identify, server, []}),
+
     {ok, #state{tid=TID}}.
 
 handle_call({listen, Addr}, _From, State=#state{}) ->
@@ -92,7 +102,7 @@ handle_call({dial, Addr, Path, Options, Timeout}, _From, State=#state{tid=TID}) 
     case connect_to(Addr, Options, Timeout, State) of
         {error, Error} -> {reply, {error, Error}, State};
         {ok, SessionPid, NewState} ->
-            case start_client_stream(TID, Path, SessionPid) of
+            case libp2p_session:start_client_stream(TID, Path, SessionPid) of
                 {error, Error} -> {reply, {error, Error}, NewState};
                 {ok, Connection} -> {reply, {ok, Connection}, NewState}
             end
@@ -102,12 +112,6 @@ handle_call({connect_to, Addr, Options, Timeout}, _From, State=#state{}) ->
         {error, Error} -> {reply, {error, Error}, State};
         {ok, SessionPid, NewState} -> {reply, {ok, SessionPid}, NewState}
     end;
-handle_call({add_connection_handler, HandlerDef}, _From, State=#state{tid=TID}) ->
-    libp2p_config:insert_connection_handler(TID, HandlerDef),
-    {reply, ok, State};
-handle_call({add_stream_handler, HandlerDef}, _From, State=#state{tid=TID}) ->
-    libp2p_config:insert_stream_handler(TID, HandlerDef),
-    {reply, ok, State};
 handle_call(stream_handlers, _From, State=#state{tid=TID}) ->
     {reply, libp2p_config:lookup_stream_handlers(TID), State};
 handle_call(Msg, _From, State) ->
@@ -125,6 +129,19 @@ handle_info({'EXIT', _From,  Reason}, State=#state{}) ->
 handle_info(Msg, _State) ->
     lager:warning("Unhandled message ~p", [Msg]).
 
+
+handle_cast({add_transport_handler, Transport}, State=#state{}) ->
+    case start_transport(Transport, State) of
+        {error, Error} -> error(Error);
+        _ -> ok
+    end,
+    {noreply, State};
+handle_cast({add_connection_handler, HandlerDef}, State=#state{tid=TID}) ->
+    libp2p_config:insert_connection_handler(TID, HandlerDef),
+    {noreply, State};
+handle_cast({add_stream_handler, HandlerDef}, State=#state{tid=TID}) ->
+    libp2p_config:insert_stream_handler(TID, HandlerDef),
+    {noreply, State};
 handle_cast({add_listen_addr, IntAddress, ExtAddress}, State=#state{tid=TID}) ->
     case libp2p_config:lookup_listener(TID, IntAddress) of
         {ok, ListenPid} ->
@@ -213,15 +230,33 @@ remove_monitor(MonitorRef, Pid, State=#state{tid=TID, monitors=Monitors}) ->
             State#state{monitors=NewMonitors}
     end.
 
+-spec start_transport(atom(), #state{}) -> {ok, pid()} | {error, term()}.
+start_transport(Transport, #state{tid=TID}) ->
+    case libp2p_config:lookup_transport(TID, Transport) of
+        {ok, Pid} -> {ok, Pid};
+        false ->
+            TransportSup = libp2p_swarm_transport_sup:sup(TID),
+            ChildSpec = #{ id => Transport,
+                           start => {Transport, start_link, [TID]},
+                           restart => temporary,
+                           shutdown => 5000,
+                           type => worker },
+            case supervisor:start_child(TransportSup, ChildSpec) of
+                {error, Error} -> {error, Error};
+                {ok, TransportPid} ->
+                    libp2p_config:insert_transport(TID, Transport, TransportPid),
+                    {ok, TransportPid}
+            end
+    end.
+
 -spec listen_on(string(), #state{}) -> {ok, #state{}} | {error, term()}.
 listen_on(Addr, State=#state{tid=TID}) ->
-    case libp2p_transport:for_addr(Addr) of
-        {ok, Transport, {ListenAddr, []}} ->
+    case libp2p_transport:for_addr(TID, Addr) of
+        {ok, ListenAddr, {Transport, TransportPid}} ->
             case libp2p_config:lookup_listener(TID, Addr) of
                 {ok, _} -> {error, already_listening};
                 false ->
-                    ListenerSup = listener_sup(TID),
-                    case Transport:start_listener(ListenerSup, ListenAddr, TID) of
+                    case Transport:start_listener(TransportPid, ListenAddr) of
                         {ok, TransportAddrs, ListenPid} ->
                             lager:info("Started Listener on ~p", [TransportAddrs]),
                             lists:foreach(fun(A) ->
@@ -241,95 +276,21 @@ listen_on(Addr, State=#state{tid=TID}) ->
 -spec connect_to(string(), [libp2p_swarm:connect_opt()], pos_integer(), #state{})
                 -> {ok, libp2p_session:pid(), #state{}} | {error, term()}.
 connect_to(Addr, Options, Timeout, State=#state{tid=TID}) ->
-    case libp2p_transport:for_addr(Addr) of
-        {ok, Transport, {ConnAddr, _}} ->
+    case libp2p_transport:for_addr(TID, Addr) of
+        {ok, ConnAddr, {Transport, TransportPid}} ->
             case libp2p_config:lookup_session(TID, ConnAddr, Options) of
                 {ok, Pid} ->
                     {ok, Pid, State};
                 false ->
-                    ListenAddrs = libp2p_config:listen_addrs(TID),
-                    PortOptions = case proplists:get_value(unique, Options) of
-                                      true ->
-                                          [];
-                                      _ ->
-                                          {ok, PO} = find_matching_listen_port(multiaddr:new(Addr), ListenAddrs),
-                                          PO
-                                  end,
                     lager:info("Connecting to ~p", [ConnAddr]),
-                    case Transport:dial(ConnAddr, Options++PortOptions, Timeout) of
+                    case Transport:connect(TransportPid, ConnAddr, Options, Timeout) of
                         {error, Error} ->
                             {error, Error};
-                        {ok, Connection} ->
-                            case start_client_session(TID, ConnAddr, Connection) of
-                                {error, SessionError} -> {error, SessionError};
-                                {ok, SessionPid} ->
-                                    Parent = self(),
-                                    spawn(fun() -> Transport:discover(libp2p_swarm_sup:sup(TID), Parent, Addr) end),
-                                    {ok, SessionPid,
-                                     add_monitor(libp2p_config:session(),
-                                                 [ConnAddr], SessionPid, State)}
-                            end
+                        {ok, SessionPid} ->
+                            {ok, SessionPid,
+                             add_monitor(libp2p_config:session(),
+                                         [ConnAddr], SessionPid, State)}
                     end
             end;
         {error, Error} -> {error, Error}
-    end.
-
--spec start_client_stream(ets:tab(), string(), libp2p_session:pid())
-                         -> {ok, libp2p_connection:connection()} | {error, term()}.
-start_client_stream(_TID, Path, SessionPid) ->
-    try libp2p_session:open(SessionPid) of
-        {error, Error} -> {error, Error};
-        {ok, Connection} ->
-            Handlers = [{Path, undefined}],
-            try libp2p_multistream_client:negotiate_handler(Handlers, "stream", Connection) of
-                {error, Error} -> {error, Error};
-                {ok, _} -> {ok, Connection}
-            catch
-                What:Why -> {error, {What, Why}}
-            end
-    catch
-        What:Why -> {error, {What, Why}}
-    end.
-
--spec start_client_session(ets:tab(), string(), libp2p_connection:connection())
-                          -> {ok, libp2p_session:pid()} | {error, term()}.
-start_client_session(TID, Addr, Connection) ->
-    Handlers = libp2p_config:lookup_connection_handlers(TID),
-    case libp2p_multistream_client:negotiate_handler(Handlers, Addr, Connection) of
-        {error, Error} -> {error, Error};
-        {ok, {_, {M, F}}} ->
-            ChildSpec = #{ id => make_ref(),
-                           start => {M, F, [Connection, [], TID]},
-                           restart => temporary,
-                           shutdown => 5000,
-                           type => worker },
-            SessionSup = session_sup(TID),
-            {ok, SessionPid} = supervisor:start_child(SessionSup, ChildSpec),
-            libp2p_config:insert_session(TID, Addr, SessionPid),
-            case libp2p_connection:controlling_process(Connection, SessionPid) of
-                ok -> {ok, SessionPid};
-                {error, Error} ->
-                    libp2p_connection:close(Connection),
-                    {error, Error}
-            end
-    end.
-
-listener_sup(TID) ->
-    libp2p_swarm_listener_sup:sup(TID).
-
-session_sup(TID) ->
-    libp2p_swarm_session_sup:sup(TID).
-
-find_matching_listen_port(_Addr, []) ->
-    {ok, []};
-find_matching_listen_port(Addr, [H|ListenAddrs]) ->
-    TheirAddr = multiaddr:new(H),
-    MyProtocols = [ element(1, T) || T <- multiaddr:protocols(Addr)],
-    TheirProtocols = [ element(1, T) || T <- multiaddr:protocols(TheirAddr)],
-    case MyProtocols == TheirProtocols of
-        true ->
-            %% TODO we assume the port is the second element of the second tuple, this is not safe
-            {ok, [{port, list_to_integer(element(2, lists:nth(2, multiaddr:protocols(TheirAddr))))}]};
-        false ->
-            find_matching_listen_port(Addr, ListenAddrs)
     end.
