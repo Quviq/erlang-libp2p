@@ -8,16 +8,22 @@
 -record(state, {
           swarm = [],
           client,
+          client_swarm,
           server,
-          packet,
-          inflight=0
+          server_swarm,
+          packet = <<>>,
+          sent = <<>>,  %% formerly known as inflight
+          to_send = <<>>,
+          received = <<>>,
+          inflight=0  %% remove
          }).
 
 %% This is a test model, export all functions to avoid problems when one is overlooked. 
 -compile([export_all, nowarn_export_all]).
+-import(eqc_statem, [tag/2]).
 
 initial_state() ->
-    #state{packet={var, packet}}.
+    #state{}.
 
 serve_stream(Connection, _Path, _TID, [Parent]) ->
     Parent ! {hello, self()},
@@ -57,48 +63,101 @@ start_swarm_next(S, Value, []) ->
 start_swarm_post(_S, [], Res) ->
   is_pid(Res).
 
+%% operation: make one swarm the server
+
+start_handler_pre(S) ->
+  length(S#state.swarm) >= 2 andalso S#state.server == undefined.
+
+start_handler_args(S) ->
+  [elements(S#state.swarm)].
+
+start_handler(Swarm) ->
+  libp2p_swarm:add_stream_handler(Swarm, "eqc", {?MODULE, serve_stream, [self()]}).
+
+%% ServerRef is symbolic here, don't match on it!
+start_handler_next(S, _Value, [Swarm]) ->
+  S#state{server_swarm = Swarm}.
+
+start_handler_post(_S, [_Swarm], Res) ->
+  eq(Res,ok).
 
 %% operation: make one swarm the client
 
 start_client_pre(S) ->
-  length(S#state.swarm) == 2 andalso S#state.client == undefined.
+  length(S#state.swarm) >= 2 andalso S#state.client == undefined andalso S#state.server_swarm =/= undefined.
 
 start_client_args(S) ->
-  [shuffle(S#state.swarm)].
+  Swarm = S#state.server_swarm,
+  [Swarm, elements(S#state.swarm -- [Swarm])].
+
+%% For shrinking we need to double check that server is on the same swarm
+start_client_pre(S, [ServerSwarm, ClientSwarm]) ->
+  S#state.server_swarm == ServerSwarm.
  
-start_client([Swarm1, Swarm2]) ->
-  ok = libp2p_swarm:add_stream_handler(Swarm2, "eqc", {?MODULE, serve_stream, [self()]}),
-  
-  [S2Addr] = libp2p_swarm:listen_addrs(Swarm2),
-  {ok, StreamClient} = libp2p_swarm:dial(Swarm1, S2Addr, "eqc"),  
+start_client(ServerSwarm, ClientSwarm) ->
+  [S2Addr] = libp2p_swarm:listen_addrs(ServerSwarm),
+  {ok, StreamClient} = libp2p_swarm:dial(ClientSwarm, S2Addr, "eqc"),
   StreamClient.
 
-start_client_next(S, Value, [_]) ->
-  S#state{client = Value}.
+start_client_next(S, Value, [_, ClientSwarm]) ->
+  S#state{client = Value,
+          client_swarm = ClientSwarm}.
 
-%% opertion: make the other swarm server
 
-sync_start_pre(S) ->
-  length(S#state.swarm) == 2 andalso S#state.client =/= undefined andalso
-    S#state.server == undefined.
 
-sync_start_args(_S) ->
+%% opertion: close connection to a client
+
+close_client_pre(S) ->
+  S#state.client =/= undefined.
+
+%% close_client_args(S) ->
+%%   [S#state.client].
+
+close_client(Client) ->
+  libp2p_connection:close(Client).
+
+close_client_next(S, _Value, _Args) ->
+  S#state{client = undefined}.
+
+close_client_post(_S, [_Client], Res) ->
+  eq(Res, ok).
+
+close_client_features(S, [_Client], _Res) ->
+  [closed_in_progress || byte_size(S#state.to_send) > 0 ] ++
+    [closed || byte_size(S#state.to_send) == 0 ].
+
+%% opertion: verify that the server has been started
+%% only needed to obtain the server pid.
+
+server_started_pre(S) ->
+  S#state.client =/= undefined andalso S#state.server == undefined.
+
+server_started_args(_) ->
   [].
 
-sync_start() ->
+server_started() ->
   receive
-    {hello, Server} -> 
+    {hello, Server} ->
       erlang:monitor(process, Server),
       Server
-  after 300 ->
-      exit(error_sync)
+  after 2000 ->
+      error_starting_server
   end.
 
-sync_start_next(S, Value, []) ->
+server_started_next(S, Value, []) ->
   S#state{server = Value}.
 
+server_started_post(_S, [], Res) ->
+  is_pid(Res).
+
+
+
+
+%% operation: Sending a part of a packet
+
 send_pre(S) ->
-    S#state.client =/= undefined andalso S#state.server =/= undefined.
+    S#state.client =/= undefined andalso S#state.server =/= undefined 
+    andalso size(S#state.to_send) > 0.
 
 send_args(S) ->
     [?SUCHTHAT(Size, eqc_gen:oneof([eqc_gen:int(), eqc_gen:largeint()]), Size > 0),
@@ -145,6 +204,8 @@ send_update_packet(Size0, Inflight, Packet) ->
     binary:part(Packet, Start, Length).
 
 
+%% operation: Receiving part of a packet
+
 recv_pre(S) ->
   S#state.client =/= undefined andalso S#state.server =/= undefined.
 
@@ -156,13 +217,15 @@ recv(Size, Server) ->
     Server ! {recv, Size},
     receive
         {recv, Size, Result} -> Result;
-        {'DOWN', _, _, Server, Error} -> Error
+        {'DOWN', _, _, Server, Error} -> {'DOWN', Error}
     end.
 
 recv_post(S, [Size, _], Result) ->
-    case Size > S#state.inflight of
-        true -> eqc_statem:eq(Result, {error, timeout});
-        false -> eqc_statem:eq(element(1, Result), ok)
+    case Result of 
+      {error, closed} -> false andalso Size > byte_size(S#state.sent);
+      {error, timeout} -> Size > byte_size(S#state.sent);
+      {ok, _} -> Size =< byte_size(S#state.sent);
+      Other -> Other
     end.
 
 recv_next(S, _Result, [Size, _]) ->
@@ -173,6 +236,12 @@ recv_update_inflight(Size, Inflight) ->
         true -> Inflight;
         false -> Inflight - Size
     end.
+
+%% Observe process killed during test
+invariant(S) ->
+  conj([tag(server_died, S#state.server == undefined orelse erlang:is_process_alive(S#state.server))]).
+
+
 
 prop_correct() ->
   prop_correct(silent).
@@ -186,29 +255,61 @@ prop_correct(Mode) ->
         fun() ->
             application:ensure_all_started(ranch),
             application:ensure_all_started(lager),
+            Level = lager:get_loglevel(lager_console_backend),
             case Mode of
               verbose -> lager:set_loglevel(lager_console_backend, debug);
-              _ -> ok
+              _ -> lager:set_loglevel(lager_console_backend, error)
             end,
-            fun() -> lager:set_loglevel(lager_console_backend, error) end
+            fun() -> lager:set_loglevel(lager_console_backend, Level) end
         end,
-        ?FORALL({Packet, Cmds},
-                {eqc_gen:largebinary(500000), commands(?MODULE)},
+        ?FORALL(Cmds, commands(?MODULE),
                 begin
+                  Processes = erlang:processes(), 
+                  {H, S, Res} = run_commands(Cmds),
+                  ServerDied = is_pid(S#state.server) andalso not erlang:is_process_alive(S#state.server),
+                  Close = [ catch libp2p_connection:close(S#state.client) || S#state.client =/= undefined ],
+                  Stop = [ catch libp2p_swarm:stop(Swarm) || Swarm <- S#state.swarm ],
 
-                  {H, S, Res} = run_commands(?MODULE, Cmds, [{packet, Packet}]),
-                  ServerDied = S#state.server =/= undefined andalso not erlang:is_process_alive(S#state.server),
-                  [ catch libp2p_connection:close(S#state.client) || S#state.client =/= undefined ],
-                  [ catch libp2p_swarm:stop(Swarm) || Swarm <- S#state.swarm ],
+                  %% Stopping teh swarm will not stop the handler. BUG??
+                  [ catch (S#state.server ! stop) || S#state.server =/= undefined ],
+                  flush([]),
+
+                  %% Specify when we expect to be able to restart in clean state
+                  Zombies = wait_for_stop(3000, Processes),
                   pretty_commands(?MODULE, Cmds, {H, S, Res},
                                   aggregate(command_names(Cmds),
+                                  aggregate(call_features(H),
                                             ?WHENFAIL(
                                                begin
                                                  eqc:format("packet size: ~p~n", [byte_size(S#state.packet)]),
                                                  eqc:format("state ~p~n", [S#state{packet= <<>>}])
                                                end,
-                                               conjunction([{server, not ServerDied},
-                                                            {result, eqc:equals(Res, ok)}]))))
+                                               conjunction([{process_leak, equals([{Proc, erlang:process_info(Proc, current_function)} || Proc <- Zombies], [])},
+                                                            {server, not ServerDied},
+                                                            {result, eqc:equals(Res, ok)}])))))
                 end))).
 
+%% poll processes N times to see if we are ready cleaning up
+wait_for_stop(N, Processes) ->
+  Poll = 100,
+  timer:sleep(Poll),
+  Zombies = erlang:processes() -- Processes,
+  %% io:format("procs: "), 
+  %%   [  io:format("~p ", [Pid]) || Pid <- Zombies ],
+  %% io:format("\n"),
 
+  %% swarm handler is not always identified (server_started may not be called in sequence).
+  [ Pid ! stop || Pid <- Zombies, 
+                  erlang:process_info(Pid, current_function) == {current_function, {?MODULE, serve_loop, 2}}],
+  case Zombies == [] orelse N =< 0 of
+    true -> Zombies;
+    false -> wait_for_stop(N - Poll, Processes)
+  end.
+
+flush(Msgs) ->
+  receive
+    X -> flush([X | Msgs ])
+  after 0 ->
+      lists:reverse(Msgs)
+  end.
+      
