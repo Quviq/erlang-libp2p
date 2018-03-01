@@ -432,8 +432,9 @@ spawn_nat_discovery(Handler, MultiAddrs) ->
             %% here, for weird multihomed machines, but nat_upnp and
             %% natpmp don't support issuing a particular request from
             %% a particular interface yet
-            spawn(fun() -> try_nat_pmp(Handler, Tuple) end),
-            spawn(fun() -> try_nat_upnp(Handler, Tuple) end)
+            %% spawn(fun() -> try_nat_pmp(Handler, Tuple) end),
+            %% spawn(fun() -> try_nat_upnp(Handler, Tuple) end)
+            ok
     end.
 
 
