@@ -36,7 +36,7 @@ serve_loop(Connection, Parent) ->
             Parent ! {recv, N, Result},
             serve_loop(Connection, Parent);
          stop ->
-            libp2p_connection:close(Connection),
+            libp2p_connection:close(Connection)
       after 10000 ->
           stop %% cleanup if we don't manage to stop it as part of the test
     end.
@@ -244,12 +244,6 @@ invariant(S) ->
 
 
 prop_correct() ->
-  prop_correct(silent).
-
-check() ->
-  eqc:check(prop_correct(verbose)).
-
-prop_correct(Mode) ->
     eqc:dont_print_counterexample(
      ?SETUP(
         fun() ->
