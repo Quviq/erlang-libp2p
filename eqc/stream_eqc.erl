@@ -254,28 +254,26 @@ prop_correct(Mode) ->
      ?SETUP(
         fun() ->
             application:ensure_all_started(ranch),
-            application:ensure_all_started(lager),
-            Level = lager:get_loglevel(lager_console_backend),
-            case Mode of
-              verbose -> lager:set_loglevel(lager_console_backend, debug);
-              _ -> lager:set_loglevel(lager_console_backend, error)
-            end,
-            fun() -> lager:set_loglevel(lager_console_backend, Level) end
+            fun() -> ok end
         end,
         ?FORALL(Cmds, commands(?MODULE),
                 begin
-                  Processes = erlang:processes(), 
+                  lager_common_test_backend:bounce(error),  %% should write own handler in similar fashion
+                  Processes = erlang:processes(),
+
                   {H, S, Res} = run_commands(Cmds),
                   ServerDied = is_pid(S#state.server) andalso not erlang:is_process_alive(S#state.server),
                   Close = [ catch libp2p_connection:close(S#state.client) || S#state.client =/= undefined ],
                   Stop = [ catch libp2p_swarm:stop(Swarm) || Swarm <- S#state.swarm ],
 
-                  %% Stopping teh swarm will not stop the handler. BUG??
+                  %% Stopping the swarm will not stop the handler. BUG??
                   [ catch (S#state.server ! stop) || S#state.server =/= undefined ],
                   flush([]),
 
                   %% Specify when we expect to be able to restart in clean state
-                  Zombies = wait_for_stop(3000, Processes),
+                  Zombies = wait_for_stop(2500, Processes),
+                  Log = lager_common_test_backend:get_logs(),
+                 
                   pretty_commands(?MODULE, Cmds, {H, S, Res},
                                   aggregate(command_names(Cmds),
                                   aggregate(call_features(H),
@@ -286,9 +284,13 @@ prop_correct(Mode) ->
                                                end,
                                                conjunction([{process_leak, equals([{Proc, erlang:process_info(Proc, current_function)} || Proc <- Zombies], [])},
                                                             {server, not ServerDied},
+                                                            {log_not_empty, lager_log_empty(Log)},
                                                             {result, eqc:equals(Res, ok)}])))))
                 end))).
 
+lager_log_empty(Log) ->
+  ?WHENFAIL(eqc:format("~s", [Log]), Log == []).
+    
 %% poll processes N times to see if we are ready cleaning up
 wait_for_stop(N, Processes) ->
   Poll = 100,
