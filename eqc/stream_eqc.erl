@@ -275,6 +275,7 @@ prop_correct(Mode) ->
             fun() -> lager:set_loglevel(lager_console_backend, Level) end
         end,
         ?FORALL(Cmds, commands(?MODULE),
+        ?SOMETIMES(2,
                 begin
                   lager_eqc_backend:bounce(error),
                   Processes = erlang:processes(),
@@ -304,7 +305,7 @@ prop_correct(Mode) ->
                                                             {server, not ServerDied},
                                                             {log_not_empty, lager_log_empty(Log)},
                                                             {result, eqc:equals(Res, ok)}])))))
-                end))).
+                end)))).
 
 lager_log_empty(Log) ->
   ?WHENFAIL(eqc:format("~s", [Log]), Log == []).
