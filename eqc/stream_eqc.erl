@@ -156,7 +156,20 @@ server_started_post(_S, [], Res) ->
   is_pid(Res).
 
 
+%% operation: Prepare a packet
 
+packet_pre(S) ->
+  S#state.packet == <<>>.
+
+packet_args(S) ->
+  [?LET(Size, choose(1, 10 %%?DEFAULT_MAX_WINDOW_SIZE*3
+                    ), noshrink(binary(Size)))].
+
+packet(_) ->
+  ok.
+
+packet_next(S, _, [Bin]) ->
+  S#state{packet = Bin}.
 
 %% operation: Sending a part of a packet
 
