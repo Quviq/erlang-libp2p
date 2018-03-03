@@ -13,7 +13,6 @@
           server_swarm,
           packet = <<>>,
           sent = <<>>,  %% formerly known as inflight
-          to_send = <<>>,
           received = <<>>,
           inflight=0  %% remove
          }).
@@ -128,8 +127,8 @@ close_client_post(_S, [_Client, _Server], Res) ->
   eq(Res, ok).
 
 close_client_features(S, [_Client, _Server], _Res) ->
-  [closed_in_progress || byte_size(S#state.to_send) > 0 ] ++
-    [closed || byte_size(S#state.to_send) == 0 ].
+  [closed_in_progress || byte_size(S#state.packet) > 0 ] ++
+    [closed || byte_size(S#state.packet) == 0 ].
 
 %% opertion: verify that the server has been started
 %% only needed to obtain the server pid.
@@ -174,52 +173,49 @@ packet_next(S, _, [Bin]) ->
 %% operation: Sending a part of a packet
 
 send_pre(S) ->
-    S#state.client =/= undefined andalso S#state.server =/= undefined 
-    andalso size(S#state.to_send) > 0.
+    S#state.client =/= undefined andalso S#state.server =/= undefined
+      andalso byte_size(S#state.packet) > 0.
 
-send_args(S) ->
-    [?SUCHTHAT(Size, eqc_gen:oneof([eqc_gen:int(), eqc_gen:largeint()]), Size > 0),
-    S].
+send_args(S) ->  
+  ?LET(Size, choose(1, byte_size(S#state.packet)), 
+       begin
+         <<Data:Size/binary, Rest/binary>> = S#state.packet,
+         [S#state.client, Size, Data]
+       end).
 
-send(Size0, S) ->
-    Size = min(byte_size(S#state.packet), Size0),
-    <<Data:Size/binary, Rest/binary>> = S#state.packet,
-    {catch libp2p_connection:send(S#state.client, Data, 100), Rest}.
+send_pre(S, [Client, Size, Data]) ->
+  %% for shrinking
+  case S#state.packet of
+    <<Data:Size/binary, _/binary>> -> S#state.client == Client;
+    _ -> false
+  end.
 
-send_post(S, [Size0, _], {Result, _}) ->
-    Size = min(byte_size(S#state.packet), Size0),
-    case Size + S#state.inflight > ?DEFAULT_MAX_WINDOW_SIZE of
+%% If size shrinks, we need to adapt the prefix
+send_adapt(S, [_Client, Size, _]) ->
+  case S#state.packet of
+    <<Data:Size/binary, _/binary>> -> [S#state.client, Size, Data];
+    _ -> false
+  end.
+
+send(Client, _Size, Data) ->
+  libp2p_connection:send(Client, Data, 100).
+
+send_next(S, _Result, [_, Size, Data]) ->
+    <<_:Size/binary, Rest/binary>> = S#state.packet,
+    S#state{sent = <<(S#state.sent)/binary, Data/binary>>,
+            packet = Rest}.
+
+
+send_post(S, [_, Size, _], Result) ->
+    case Size + byte_size(S#state.sent) > ?DEFAULT_MAX_WINDOW_SIZE of
         true ->
             case Result of
-                {error, timeout} -> true;
+                {error, timeout} -> tru;
                 _ -> expected_timeout
             end;
         false ->
             eqc_statem:eq(Result, ok)
     end.
-
-send_next(S, _Result, [Size, _]) ->
-    S#state{inflight={call, ?MODULE, send_update_inflight, [Size, S#state.inflight, S#state.packet]},
-            packet={call, ?MODULE, send_update_packet, [Size, S#state.inflight, S#state.packet]}}.
-
-send_update_inflight(Size0, Inflight, Packet) ->
-    Size = min(Size0, byte_size(Packet)),
-    case Size + Inflight > ?DEFAULT_MAX_WINDOW_SIZE of
-        true -> ?DEFAULT_MAX_WINDOW_SIZE;
-        false -> Inflight + Size
-    end.
-
-send_update_packet(Size0, Inflight, Packet) ->
-    Size = min(Size0, byte_size(Packet)),
-    case Size + Inflight > ?DEFAULT_MAX_WINDOW_SIZE of
-        true ->
-            Start = min(byte_size(Packet), ?DEFAULT_MAX_WINDOW_SIZE - Inflight),
-            Length = byte_size(Packet) - Start;
-        false ->
-            Start = min(byte_size(Packet), Size),
-            Length = byte_size(Packet) - Start
-    end,
-    binary:part(Packet, Start, Length).
 
 
 %% operation: Receiving part of a packet
