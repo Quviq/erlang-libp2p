@@ -25,8 +25,10 @@
 initial_state() ->
     #state{}.
 
+
+
 serve_stream(Connection, _Path, _TID, [Parent]) ->
-    Parent ! {hello, self()},
+    Parent ! {hello, self(), Connection},
     serve_loop(Connection, Parent).
 
 serve_loop(Connection, Parent) ->
@@ -91,7 +93,7 @@ start_client_args(S) ->
   [Swarm, elements(S#state.swarm -- [Swarm])].
 
 %% For shrinking we need to double check that server is on the same swarm
-start_client_pre(S, [ServerSwarm, ClientSwarm]) ->
+start_client_pre(S, [ServerSwarm, _ClientSwarm]) ->
   S#state.server_swarm == ServerSwarm.
  
 start_client(ServerSwarm, ClientSwarm) ->
@@ -108,21 +110,24 @@ start_client_next(S, Value, [_, ClientSwarm]) ->
 %% opertion: close connection to a client
 
 close_client_pre(S) ->
-  S#state.client =/= undefined.
+  S#state.client =/= undefined andalso 
+    S#state.server =/= undefined.  
+    %% The model should have started monitoring the server process
 
-%% close_client_args(S) ->
-%%   [S#state.client].
+close_client_args(S) ->
+  [S#state.client, S#state.server].
 
-close_client(Client) ->
+close_client(Client, Server) ->
+  Server ! stop,
   libp2p_connection:close(Client).
 
-close_client_next(S, _Value, _Args) ->
-  S#state{client = undefined}.
+close_client_next(S, _Value, [_Client, _Server]) ->
+  S#state{client = undefined, server = undefined}.
 
-close_client_post(_S, [_Client], Res) ->
+close_client_post(_S, [_Client, _Server], Res) ->
   eq(Res, ok).
 
-close_client_features(S, [_Client], _Res) ->
+close_client_features(S, [_Client, _Server], _Res) ->
   [closed_in_progress || byte_size(S#state.to_send) > 0 ] ++
     [closed || byte_size(S#state.to_send) == 0 ].
 
@@ -137,7 +142,7 @@ server_started_args(_) ->
 
 server_started() ->
   receive
-    {hello, Server} ->
+    {hello, Server, _Client} ->
       erlang:monitor(process, Server),
       Server
   after 2000 ->
@@ -300,9 +305,6 @@ wait_for_stop(N, Processes) ->
   Poll = 100,
   timer:sleep(Poll),
   Zombies = erlang:processes() -- Processes,
-  %% io:format("procs: "), 
-  %%   [  io:format("~p ", [Pid]) || Pid <- Zombies ],
-  %% io:format("\n"),
 
   %% swarm handler is not always identified (server_started may not be called in sequence).
   [ Pid ! stop || Pid <- Zombies, 
