@@ -242,32 +242,42 @@ invariant(S) ->
   conj([tag(server_died, S#state.server == undefined orelse erlang:is_process_alive(S#state.server))]).
 
 
-
 prop_correct() ->
+  prop_correct(silent).
+
+prop_correct(Mode) ->
     eqc:dont_print_counterexample(
      ?SETUP(
         fun() ->
             application:ensure_all_started(ranch),
-            fun() -> ok end
+            application:ensure_all_started(lager),
+            %% both are guaranteed by rebar.config
+            %% {shell, [{apps, [lager, ranch]}]}.
+            Level = lager:get_loglevel(lager_console_backend),
+            case Mode of
+              verbose -> lager:set_loglevel(lager_console_backend, debug);
+              _ -> lager:set_loglevel(lager_console_backend, error)
+            end,
+            fun() -> lager:set_loglevel(lager_console_backend, Level) end
         end,
         ?FORALL(Cmds, commands(?MODULE),
                 begin
-                  lager_common_test_backend:bounce(error),  %% should write own handler in similar fashion
+                  lager_eqc_backend:bounce(error),
                   Processes = erlang:processes(),
 
                   {H, S, Res} = run_commands(Cmds),
                   ServerDied = is_pid(S#state.server) andalso not erlang:is_process_alive(S#state.server),
                   Close = [ catch libp2p_connection:close(S#state.client) || S#state.client =/= undefined ],
                   Stop = [ catch libp2p_swarm:stop(Swarm) || Swarm <- S#state.swarm ],
-
+                      
                   %% Stopping the swarm will not stop the handler. BUG??
                   [ catch (S#state.server ! stop) || S#state.server =/= undefined ],
                   flush([]),
-
+                      
                   %% Specify when we expect to be able to restart in clean state
                   Zombies = wait_for_stop(2500, Processes),
-                  Log = lager_common_test_backend:get_logs(),
-                 
+                  Log = lager_eqc_backend:get_logs(),
+                  
                   pretty_commands(?MODULE, Cmds, {H, S, Res},
                                   aggregate(command_names(Cmds),
                                   aggregate(call_features(H),
