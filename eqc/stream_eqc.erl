@@ -321,7 +321,7 @@ prop_correct(Mode) ->
                                                conjunction([{process_leak, equals([{Proc, erlang:process_info(Proc, current_function)} || Proc <- Zombies], [])},
                                                             {server, not ServerDied},
                                                             {cleanup, equals(lists:usort(Close ++ Stop) -- [ok], [])},
-                                                            {log_not_empty, lager_log_empty(Log)},
+                                                            {log_not_empty, true orelse lager_log_empty(Log)},
                                                             {result, eqc:equals(Res, ok)}])))))
                 end)))).
 
