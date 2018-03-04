@@ -272,6 +272,12 @@ recv_features(_S, [Size, _], Error) ->
 invariant(S) ->
   conj([tag(server_died, S#state.server == undefined orelse erlang:is_process_alive(S#state.server))]).
 
+%% Increase the probability to have something in flight.
+weight(_S, send) -> 30;
+weight(_S, recv) -> 8;
+weight(_S, client_close) -> 1;
+weight(_, _) -> 5. 
+
 
 prop_correct() ->
   prop_correct(silent).
