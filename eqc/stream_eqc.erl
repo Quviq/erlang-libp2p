@@ -113,8 +113,8 @@ close_client_pre(S) ->
     S#state.server =/= undefined.  
     %% The model should have started monitoring the server process
 
-close_client_args(S) ->
-  [S#state.client, S#state.server].
+%% close_client_args(S) ->
+%%   [S#state.client, S#state.server].
 
 close_client(Client, Server) ->
   Server ! stop,
@@ -217,6 +217,11 @@ send_post(S, [_, Size, _], Result) ->
             eqc_statem:eq(Result, ok)
     end.
 
+send_features(_S, [_Client, Size, _Data], Res) ->
+  [ {sent, Size} || Res == ok ] ++
+   [ {try_sent, Size, Res} || Res =/= ok ].
+
+
 
 %% operation: Receiving part of a packet
 
@@ -224,8 +229,12 @@ recv_pre(S) ->
   S#state.client =/= undefined andalso S#state.server =/= undefined.
 
 recv_args(S) ->
-    [?SUCHTHAT(Size, eqc_gen:oneof([eqc_gen:int(), eqc_gen:largeint()]), Size > 0),
+    [choose(1, byte_size(S#state.sent)+5),
      S#state.server].
+
+recv_pre(S, [_, Server]) ->
+  %% Shrink away recv when server stopped
+  S#state.server == Server.
 
 recv(Size, Server) ->
     Server ! {recv, Size},
@@ -236,20 +245,28 @@ recv(Size, Server) ->
 
 recv_post(S, [Size, _], Result) ->
     case Result of 
-      {error, closed} -> false andalso Size > byte_size(S#state.sent);
+      %% {error, closed} -> Size > byte_size(S#state.sent);
       {error, timeout} -> Size > byte_size(S#state.sent);
-      {ok, _} -> Size =< byte_size(S#state.sent);
+      {ok, Data} ->
+        <<Pre:Size/binary, _/binary>> = S#state.sent,
+        Size =< byte_size(S#state.sent) andalso Pre == Data;
       Other -> Other
     end.
 
 recv_next(S, _Result, [Size, _]) ->
-    S#state{inflight={call, ?MODULE, recv_update_inflight, [Size, S#state.inflight]}}.
-
-recv_update_inflight(Size, Inflight) ->
-    case Size > Inflight of
-        true -> Inflight;
-        false -> Inflight - Size
+    case S#state.sent of
+      <<_:Size/binary, Rest/binary>> ->
+        S#state{sent = Rest};
+      _ ->
+        S
     end.
+
+recv_features(_S, [Size, _], {ok, _}) ->
+  [ {recv, Size, ok} ];
+recv_features(_S, [Size, _], Error) ->
+  [ {recv, Size, Error} ].
+
+
 
 %% Observe process killed during test
 invariant(S) ->
