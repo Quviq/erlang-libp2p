@@ -113,15 +113,15 @@ close_client_pre(S) ->
     S#state.server =/= undefined.  
     %% The model should have started monitoring the server process
 
-%% close_client_args(S) ->
-%%   [S#state.client, S#state.server].
+close_client_args(S) ->
+  [S#state.client, S#state.server].
 
 close_client(Client, Server) ->
   Server ! stop,
   libp2p_connection:close(Client).
 
 close_client_next(S, _Value, [_Client, _Server]) ->
-  S#state{client = undefined, server = undefined}.
+  S#state{client = undefined, server = undefined, sent = <<>>, packet = <<>>}.
 
 close_client_post(_S, [_Client, _Server], Res) ->
   eq(Res, ok).
