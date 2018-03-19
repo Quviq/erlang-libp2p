@@ -7,6 +7,7 @@
 
 -record(state, {
           swarm = [],
+          swarm_names = [],
           client,
           client_swarm,
           server,
@@ -53,13 +54,17 @@ start_swarm_pre(S) ->
 start_swarm_args(_S) ->
   [elements([denver, los_angeles, stockholm, goteborg])].
 
+start_swarm_pre(S, [Name]) ->
+  not lists:member(Name, S#state.swarm_names).
+
 start_swarm(Name) ->
   {ok, Pid} = libp2p_swarm:start(Name, 0),
   %% Check the type, but only use the Pid in model
   Pid.
 
-start_swarm_next(S, Value, [_]) ->
-  S#state{swarm = S#state.swarm ++ [Value]}.  %% add at tail for better shrinking
+start_swarm_next(S, Value, [Name]) ->
+  S#state{swarm = S#state.swarm ++ [Value],
+          swarm_names = S#state.swarm_names ++ [Name]}.  %% add at tail for better shrinking
 
 start_swarm_post(_S, [_], Res) ->
   is_pid(Res).
