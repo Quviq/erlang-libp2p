@@ -166,7 +166,7 @@ packet_pre(S) ->
   S#state.packet == <<>>.
 
 packet_args(_S) ->
-  [?LET(Size, choose(1, 10 %%?DEFAULT_MAX_WINDOW_SIZE*3
+  [?LET(Size, choose(1, ?DEFAULT_MAX_WINDOW_SIZE*3
                     ), noshrink(binary(Size)))].
 
 packet(_) ->
@@ -215,7 +215,7 @@ send_post(S, [_, Size, _], Result) ->
     case Size + byte_size(S#state.sent) > ?DEFAULT_MAX_WINDOW_SIZE of
         true ->
             case Result of
-                {error, timeout} -> tru;
+                {error, timeout} -> true;
                 _ -> expected_timeout
             end;
         false ->
@@ -293,6 +293,7 @@ prop_correct(Flags) ->
         fun() ->
             application:ensure_all_started(ranch),
             application:ensure_all_started(lager),
+            io:format("Compiled with max window size ~p\n", [?DEFAULT_MAX_WINDOW_SIZE]),
             %% both are guaranteed by rebar.config
             %% {shell, [{apps, [lager, ranch]}]}.
             Level = lager:get_loglevel(lager_console_backend),
