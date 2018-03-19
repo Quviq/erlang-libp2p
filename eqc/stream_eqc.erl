@@ -101,7 +101,7 @@ start_client_pre(S, [ServerSwarm, _ClientSwarm]) ->
   S#state.server_swarm == ServerSwarm.
  
 start_client(ServerSwarm, ClientSwarm) ->
-  [S2Addr] = libp2p_swarm:listen_addrs(ServerSwarm),
+  [S2Addr|_] = libp2p_swarm:listen_addrs(ServerSwarm),
   {ok, StreamClient} = libp2p_swarm:dial(ClientSwarm, S2Addr, "eqc"),
   StreamClient.
 
