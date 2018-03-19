@@ -300,6 +300,7 @@ prop_correct(Flags) ->
         ?FORALL(Cmds, commands(?MODULE),
         ?SOMETIMES(2,
                 begin
+                  os:cmd("rm -r data/*"), %% Remove all swarm related files
                   lager_eqc_backend:bounce([{level, error}]),
                   Processes = erlang:processes(),
 
